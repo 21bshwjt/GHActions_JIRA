@@ -30,7 +30,7 @@ Teams spend time exporting Jira issues by hand, then cleaning them up in Excel t
 - ✅ **Spot gaps fast:** flags tickets with no **Description** or **Acceptance Criteria**
 - ✅ **Color-coded status:** Done, In Progress, Blocked and more at a glance
 - ✅ **No infrastructure:** runs on GitHub-hosted runners
-- ✅ **Secrets stay secret:** the API token lives in GitHub Secrets only
+- ✅ **Service account auth:** OAuth 2.0 client credentials, not a personal API token
 - ✅ **Self-cleaning:** report artifacts are deleted after **7 days**
 
 ---
@@ -54,17 +54,18 @@ An Excel workbook with **one row per issue**, plus auto-filter, a frozen header 
 ## 🚀 Quick start
 
 1. **Fork** this repository.
-2. **Create a Jira API token** at [id.atlassian.com → Security → API tokens](https://id.atlassian.com/manage-profile/security/api-tokens).
-3. Go to **Settings → Secrets and variables → Actions** in your fork and add:
+2. **Create an Atlassian service account with OAuth 2.0 credentials** (*admin.atlassian.com → Directory → Service accounts*). Give it the **`read:jira-work`** scope and **Browse** permission on your project. Note the **Client ID** and **Client secret**.
+3. **Find your Cloud ID** by opening `https://your-site.atlassian.net/_edge/tenant_info` in a browser.
+4. Go to **Settings → Secrets and variables → Actions** in your fork and add:
 
    | Type | Name | Example |
    |---|---|---|
-   | 🔧 Variable | `JIRA_BASE_URL` | `https://your-site.atlassian.net` |
-   | 🔧 Variable | `JIRA_EMAIL` | `you@example.com` |
-   | 🔒 Secret | `JIRA_API_TOKEN` | *(your API token)* |
+   | 🔧 Variable | `JIRA_CLOUD_ID` | `a1b2c3d4-...` |
+   | 🔒 Secret | `JIRA_CLIENT_ID` | *(service account Client ID)* |
+   | 🔒 Secret | `JIRA_CLIENT_SECRET` | *(service account Client secret)* |
 
-4. Open **Actions → Jira Report → Run workflow**, enter your **project key** (default `KAN`) and run it.
-5. When it finishes, download the **`jira-report`** artifact from the run summary. 🎉
+5. Open **Actions → Jira Report → Run workflow**, enter your **project key** (default `KAN`) and run it.
+6. When it finishes, download the **`jira-report`** artifact from the run summary. 🎉
 
 > [!IMPORTANT]
 > **Custom field IDs differ on every Jira site.** The defaults are `customfield_10015` (Start date) and `customfield_10320` (Acceptance criteria).
@@ -79,7 +80,8 @@ flowchart LR
     U["👤 You<br/>Run workflow"] --> GA["⚙️ GitHub Actions<br/>ubuntu-latest"]
     GA --> PS["📜 Export-JiraReport.ps1<br/>PowerShell 7"]
     S[("🔒 GitHub Secrets<br/>& Variables")] -. credentials .-> PS
-    PS -- "REST API v3<br/>/search/jql (paged)" --> J[("🟦 Jira Cloud")]
+    PS -- "OAuth 2.0<br/>client credentials" --> O["🔑 auth.atlassian.com"]
+    PS -- "REST API v3 via api.atlassian.com<br/>/search/jql (paged)" --> J[("🟦 Jira Cloud")]
     PS -- "ImportExcel" --> X["📊 .xlsx report"]
     X --> A["📦 Workflow artifact<br/>(kept 7 days)"]
     A --> U
@@ -88,8 +90,8 @@ flowchart LR
 **How it works**
 
 1. You trigger the workflow manually (`workflow_dispatch`) with a project key.
-2. The script reads the Jira credentials from GitHub Secrets and Variables.
-3. It calls the Jira Cloud **REST API v3**, following `nextPageToken` until every issue is fetched.
+2. The script exchanges the service account's Client ID and secret for an OAuth access token.
+3. It calls the Jira Cloud **REST API v3** through `api.atlassian.com/ex/jira/{cloudId}`, following `nextPageToken` until every issue is fetched.
 4. Each issue becomes one row, with `True`/`False` flags for Description and Acceptance Criteria.
 5. **ImportExcel** writes the styled workbook, and the workflow uploads it as an artifact.
 
@@ -100,9 +102,9 @@ flowchart LR
 Requires **PowerShell 7+**. The [ImportExcel](https://github.com/dfinke/ImportExcel) module installs automatically on first run. Microsoft Excel is **not** needed to generate the report.
 
 ```powershell
-$env:JIRA_BASE_URL  = 'https://your-site.atlassian.net'
-$env:JIRA_EMAIL     = 'you@example.com'
-$env:JIRA_API_TOKEN = Read-Host 'Jira API token'
+$env:JIRA_CLOUD_ID      = '<your-cloud-id>'
+$env:JIRA_CLIENT_ID     = '<your-client-id>'
+$env:JIRA_CLIENT_SECRET = Read-Host 'Client secret'
 
 ./Export-JiraReport.ps1 -ProjectKey KAN -OutputFolder ./reports
 ```
@@ -118,7 +120,8 @@ $env:JIRA_API_TOKEN = Read-Host 'Jira API token'
 | `-WorksheetName` | `All_Issues` | Sheet name |
 | `-StartDateFieldId` | `customfield_10015` | Start date custom field |
 | `-AcceptanceCriteriaFieldId` | `customfield_10320` | Acceptance criteria custom field |
-| `-JiraBaseUrl` · `-Email` · `-ApiToken` | `JIRA_*` environment variables | Jira connection |
+| `-CloudId` · `-ClientId` · `-ClientSecret` | `JIRA_CLOUD_ID` · `JIRA_CLIENT_ID` · `JIRA_CLIENT_SECRET` | OAuth 2.0 service account (preferred) |
+| `-JiraBaseUrl` · `-Email` · `-ApiToken` | `JIRA_BASE_URL` · `JIRA_EMAIL` · `JIRA_API_TOKEN` | Fallback: basic auth with an API token |
 
 </details>
 
@@ -126,8 +129,9 @@ $env:JIRA_API_TOKEN = Read-Host 'Jira API token'
 
 ## 🔐 Security
 
-- 🔒 The API token is stored only as a **GitHub Secret**. It never appears in the repo, the logs or the report.
-- 👤 The token acts as your Jira account, so use an account that only needs **Browse** access to the project.
+- 🔒 The Client ID and secret are stored only as **GitHub Secrets**. They never appear in the repo, the logs or the report.
+- 🤖 A **service account** is used instead of a personal account, so access is limited to the `read:jira-work` scope and the projects you grant it.
+- ⏱️ Each run exchanges the credentials for an access token that expires after **1 hour**.
 - 🗑️ Report artifacts are **automatically deleted after 7 days**.
 
 ---

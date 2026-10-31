@@ -17,9 +17,9 @@ jobs:
       - name: Generate Excel report
         shell: pwsh
         env:
-          JIRA_BASE_URL: ${{ vars.JIRA_BASE_URL }}
-          JIRA_EMAIL: ${{ vars.JIRA_EMAIL }}
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          JIRA_CLOUD_ID: ${{ vars.JIRA_CLOUD_ID }}
+          JIRA_CLIENT_ID: ${{ secrets.JIRA_CLIENT_ID }}
+          JIRA_CLIENT_SECRET: ${{ secrets.JIRA_CLIENT_SECRET }}
         run: |
           ./Export-JiraReport.ps1 -ProjectKey '${{ inputs.project_key }}' -OutputFolder "$env:RUNNER_TEMP/jira-report"
 

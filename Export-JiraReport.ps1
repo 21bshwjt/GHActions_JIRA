@@ -10,12 +10,24 @@
 .NOTES
     - Uses Jira Cloud REST API v3 (/rest/api/3/search/jql) with token-based pagination.
     - Requires ImportExcel module (auto-installed if missing).
-    - JiraBaseUrl, Email and ApiToken fall back to the JIRA_BASE_URL, JIRA_EMAIL and
-      JIRA_API_TOKEN environment variables (used when running from GitHub Actions).
+    - Authentication (first match wins):
+        1. OAuth 2.0 client credentials (Atlassian service account):
+           CloudId, ClientId, ClientSecret  <- JIRA_CLOUD_ID, JIRA_CLIENT_ID, JIRA_CLIENT_SECRET
+           Calls go through https://api.atlassian.com/ex/jira/{cloudId}.
+        2. Basic auth: JiraBaseUrl, Email, ApiToken <- JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN
 #>
 
 [CmdletBinding()]
 param(
+    [Parameter(Mandatory = $false)]
+    [string]$CloudId = $env:JIRA_CLOUD_ID,
+
+    [Parameter(Mandatory = $false)]
+    [string]$ClientId = $env:JIRA_CLIENT_ID,
+
+    [Parameter(Mandatory = $false)]
+    [string]$ClientSecret = $env:JIRA_CLIENT_SECRET,
+
     [Parameter(Mandatory = $false)]
     [string]$JiraBaseUrl = $(if ($env:JIRA_BASE_URL) { $env:JIRA_BASE_URL } else { "https://your-site.atlassian.net" }),
 
@@ -48,16 +60,46 @@ param(
 
 # ---- 1. Setup & Authentication ---------------------------------------------
 
-if ([string]::IsNullOrWhiteSpace($Email) -or [string]::IsNullOrWhiteSpace($ApiToken)) {
-    throw "Email and ApiToken are required. Pass -Email/-ApiToken or set JIRA_EMAIL/JIRA_API_TOKEN."
+$useOAuth = -not ([string]::IsNullOrWhiteSpace($ClientId) -or [string]::IsNullOrWhiteSpace($ClientSecret))
+
+if ($useOAuth) {
+    if ([string]::IsNullOrWhiteSpace($CloudId)) {
+        throw "CloudId is required with ClientId/ClientSecret. Pass -CloudId or set JIRA_CLOUD_ID."
+    }
+
+    # Exchange the client credentials for a short-lived (1 hour) access token
+    $tokenBody = @{
+        grant_type    = 'client_credentials'
+        client_id     = $ClientId
+        client_secret = $ClientSecret
+    } | ConvertTo-Json
+
+    try {
+        $tokenResp = Invoke-RestMethod -Method Post -Uri 'https://auth.atlassian.com/oauth/token' `
+            -ContentType 'application/json' -Body $tokenBody -ErrorAction Stop
+    }
+    catch {
+        $detail = if ($_.ErrorDetails.Message) { " API Response: $($_.ErrorDetails.Message)" } else { '' }
+        throw "Failed to get OAuth access token: $($_.Exception.Message)$detail"
+    }
+
+    $authHeader = "Bearer $($tokenResp.access_token)"
+    $apiBaseUrl = "https://api.atlassian.com/ex/jira/$CloudId"
+    Write-Host "Authenticated with OAuth 2.0 client credentials (cloudId $CloudId)." -ForegroundColor Gray
+}
+else {
+    if ([string]::IsNullOrWhiteSpace($Email) -or [string]::IsNullOrWhiteSpace($ApiToken)) {
+        throw "No credentials found. Set JIRA_CLOUD_ID/JIRA_CLIENT_ID/JIRA_CLIENT_SECRET, or JIRA_EMAIL/JIRA_API_TOKEN."
+    }
+
+    # Prepare Basic Auth Header
+    $authBytes = [System.Text.Encoding]::ASCII.GetBytes("${Email}:${ApiToken}")
+    $authHeader = "Basic $([System.Convert]::ToBase64String($authBytes))"
+    $apiBaseUrl = $JiraBaseUrl
 }
 
-# Prepare Basic Auth Headers
-$authBytes = [System.Text.Encoding]::ASCII.GetBytes("${Email}:${ApiToken}")
-$base64Auth = [System.Convert]::ToBase64String($authBytes)
-
 $headers = @{
-    "Authorization" = "Basic $base64Auth"
+    "Authorization" = $authHeader
     "Content-Type"  = "application/json"
     "Accept"        = "application/json"
 }
@@ -99,7 +141,7 @@ function Get-JiraIssuesByJql {
         [Parameter(Mandatory = $true)][string[]]$Fields
     )
 
-    $server = $JiraBaseUrl.TrimEnd('/')
+    $server = $apiBaseUrl.TrimEnd('/')
     $fieldList = $Fields -join ','
     $token = $null
 
