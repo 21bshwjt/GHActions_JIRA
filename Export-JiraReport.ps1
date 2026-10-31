@@ -72,11 +72,11 @@ if ($useOAuth) {
         grant_type    = 'client_credentials'
         client_id     = $ClientId
         client_secret = $ClientSecret
-    } | ConvertTo-Json
+    }
 
     try {
         $tokenResp = Invoke-RestMethod -Method Post -Uri 'https://auth.atlassian.com/oauth/token' `
-            -ContentType 'application/json' -Body $tokenBody -ErrorAction Stop
+            -ContentType 'application/x-www-form-urlencoded' -Body $tokenBody -ErrorAction Stop
     }
     catch {
         $detail = if ($_.ErrorDetails.Message) { " API Response: $($_.ErrorDetails.Message)" } else { '' }
