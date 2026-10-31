@@ -29,3 +29,4 @@ jobs:
           name: jira-report
           path: ${{ runner.temp }}/jira-report/*.xlsx
           if-no-files-found: error
+          retention-days: 7
