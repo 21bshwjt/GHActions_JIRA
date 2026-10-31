@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Pulls all Jira tickets from the IDENTITY project and exports them into a single
+    Pulls all Jira tickets from the given project and exports them into a single
     Excel worksheet using the ImportExcel module.
 
     Includes the Labels property (as a comma-separated list) and boolean (True/False)
@@ -32,7 +32,7 @@ param(
     [string]$OutputFolder = "D:\Reports",
 
     [Parameter(Mandatory = $false)]
-    [string]$ExcelFileName = "JIRA_Identity_Report_All.xlsx",
+    [string]$ExcelFileName = "JIRA_Report_All.xlsx",
 
     [Parameter(Mandatory = $false)]
     [string]$WorksheetName = "All_Issues",
